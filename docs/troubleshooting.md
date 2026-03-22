@@ -1,0 +1,44 @@
+# 🔧 Guide de dépannage
+
+## Port série inaccessible
+
+**Symptôme** : `could not open port /dev/ttyUSB0`
+
+**Solution** : Utiliser le chemin stable `/dev/serial/by-id/` dans `configuration.yaml`.
+
+## Données qui se figent
+
+**Symptôme** : Les capteurs ne se mettent plus à jour.
+
+**Causes possibles** :
+- Convertisseur CH340 instable → remplacer par PL2303 ou FTDI
+- Alimentation insuffisante du Raspberry Pi → minimum 5V/2.5A
+- Interférences EMI de l'onduleur
+
+**Solution** : Le watchdog redémarre automatiquement HA si pas de données depuis 5 minutes.
+
+## Valeurs incorrectes
+
+**Symptôme** : Les valeurs ne correspondent pas à WatchPower.
+
+**Solution** : Vérifier les index dans `sensor.py` en loggant la réponse brute :
+```bash
+ha core logs | grep "AXPERT DEBUG" | tail -10
+```
+
+## Automatisations qui ne se déclenchent pas
+
+**Vérifier dans Outils de développement → Modèles** :
+```jinja
+PV: {{ states('sensor.axpert_puissance_pv') }}W
+SOC: {{ states('sensor.axpert_soc_batterie') }}%
+Mode: {{ states('sensor.axpert_mode') }}
+Manuel: {{ states('input_boolean.onduleur_mode_manuel') }}
+D�lai: {{ (now().timestamp() - as_timestamp(states('input_datetime.onduleur_dernier_switch'))) | int }}s
+```
+
+## Erreur YAML
+
+**Symptôme** : `duplicate key "sensor"` dans les logs.
+
+**Solution** : Chaque clé ne doit apparaître qu'une seule fois dans `configuration.yaml`.

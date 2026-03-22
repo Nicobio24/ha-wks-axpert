@@ -1,0 +1,23 @@
+# ============================================================
+# WATCHDOG ONDULEUR — Détecte et corrige les gels du port série
+# ============================================================
+
+- id: onduleur_watchdog
+  alias: "Onduleur → Watchdog port série"
+  description: "Redémarre HA si pas de mise à jour depuis 5 min"
+  trigger:
+    - platform: time_pattern
+      minutes: "/5"
+  condition:
+    - condition: template
+      value_template: >
+        {% set last_update = states.sensor.axpert_puissance_pv.last_updated %}
+        {% set diff = (now() - last_update).total_seconds() %}
+        {{ diff > 300 }}
+  action:
+    - service: notify.notify
+      data:
+        message: "🔄 Watchdog — Gel détecté, redémarrage HA dans 30s"
+    - delay:
+        seconds: 30
+    - service: homeassistant.restart

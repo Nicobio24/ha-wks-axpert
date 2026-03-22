@@ -1,0 +1,8 @@
+# Fichiers sensibles
+secrets.yaml
+*.token
+
+# Fichiers temporaires
+*.pyc
+__pycache__/
+.DS_Store

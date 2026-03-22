@@ -1,0 +1,222 @@
+# ============================================================
+# AUTOMATISATIONS ONDULEUR WKS EVO / AXPERT
+# ============================================================
+
+# ------------------------------------------------------------
+# 1. PASSAGE EN SBU (battery mode)
+#    Vérifie toutes les 5 min : PV > 50W ET SOC > 50%
+# ------------------------------------------------------------
+- id: onduleur_passage_sbu
+  alias: "Onduleur → Passage SBU (battery mode)"
+  description: "Bascule en SBU quand PV suffisant et batterie ok"
+  trigger:
+    - platform: time_pattern
+      minutes: "/5"
+  condition:
+    - condition: state
+      entity_id: input_boolean.onduleur_mode_manuel
+      state: "off"
+    - condition: numeric_state
+      entity_id: sensor.axpert_puissance_pv
+      above: 50
+    - condition: numeric_state
+      entity_id: sensor.axpert_soc_batterie
+      above: 50
+    - condition: not
+      conditions:
+        - condition: state
+          entity_id: sensor.axpert_mode
+          state: "SBU - Battery mode"
+    - condition: template
+      value_template: >
+        {% set dernier = states('input_datetime.onduleur_dernier_switch') %}
+        {% set diff = now().timestamp() - as_timestamp(dernier) %}
+        {{ diff > 600 }}
+    - condition: template
+      value_template: >
+        {{ states('counter.onduleur_switchs_jour') | int(0) < 6 }}
+  action:
+    - service: shell_command.onduleur_sbu
+    - service: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.onduleur_dernier_switch
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+    - service: counter.increment
+      target:
+        entity_id: counter.onduleur_switchs_jour
+    - service: notify.notify
+      data:
+        message: "☀️ Onduleur → SBU | PV {{ states('sensor.axpert_puissance_pv') }}W | SOC {{ states('sensor.axpert_soc_batterie') }}%"
+
+# ------------------------------------------------------------
+# 2. PASSAGE EN SUB (line mode)
+#    Vérifie toutes les 5 min :
+#    PV < (Puissance active × 50%) ET SOC < 90% ET mode SBU
+# ------------------------------------------------------------
+- id: onduleur_passage_sub_soir
+  alias: "Onduleur → Passage SUB (line mode) soir"
+  description: "Bascule en SUB quand PV insuffisant vs consommation"
+  trigger:
+    - platform: time_pattern
+      minutes: "/5"
+  condition:
+    - condition: state
+      entity_id: input_boolean.onduleur_mode_manuel
+      state: "off"
+    - condition: state
+      entity_id: sensor.axpert_mode
+      state: "SBU - Battery mode"
+    - condition: numeric_state
+      entity_id: sensor.axpert_soc_batterie
+      below: 90
+    - condition: template
+      value_template: >
+        {% set pv = states('sensor.axpert_puissance_pv') | float(0) %}
+        {% set conso = states('sensor.axpert_puissance_active') | float(0) %}
+        {{ conso > 0 and (conso - pv) > (conso * 0.5) }}
+    - condition: template
+      value_template: >
+        {% set dernier = states('input_datetime.onduleur_dernier_switch') %}
+        {% set diff = now().timestamp() - as_timestamp(dernier) %}
+        {{ diff > 600 }}
+    - condition: template
+      value_template: >
+        {{ states('counter.onduleur_switchs_jour') | int(0) < 6 }}
+  action:
+    - service: shell_command.onduleur_sub
+    - service: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.onduleur_dernier_switch
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+    - service: counter.increment
+      target:
+        entity_id: counter.onduleur_switchs_jour
+    - service: notify.notify
+      data:
+        message: "🌙 Onduleur → SUB | PV {{ states('sensor.axpert_puissance_pv') }}W | Conso {{ states('sensor.axpert_puissance_active') }}W | SOC {{ states('sensor.axpert_soc_batterie') }}%"
+
+# ------------------------------------------------------------
+# 3. PROTECTION — Batterie faible < 20%
+#    S'applique MÊME en mode manuel
+# ------------------------------------------------------------
+- id: onduleur_protection_batterie
+  alias: "Onduleur → Protection batterie faible"
+  description: "Bascule SUB si SOC < 20% — priorité absolue"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.axpert_soc_batterie
+      below: 20
+    - platform: time_pattern
+      minutes: "/5"
+  condition:
+    - condition: numeric_state
+      entity_id: sensor.axpert_soc_batterie
+      below: 20
+    - condition: not
+      conditions:
+        - condition: state
+          entity_id: sensor.axpert_mode
+          state: "SUB - Line mode"
+  action:
+    - service: shell_command.onduleur_sub
+    - service: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.onduleur_dernier_switch
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+    - service: counter.increment
+      target:
+        entity_id: counter.onduleur_switchs_jour
+    - service: notify.notify
+      data:
+        message: "⚠️ ALERTE — Batterie {{ states('sensor.axpert_soc_batterie') }}% → SUB forcé !"
+
+# ------------------------------------------------------------
+# 4. SÉCURITÉ — Passage SUB forcé 1h avant coucher du soleil
+#    Filet de sécurité basé sur position solaire réelle
+# ------------------------------------------------------------
+- id: onduleur_sub_nuit
+  alias: "Onduleur → SUB forcé 1h avant coucher soleil"
+  description: "Filet de sécurité basé sur heure coucher soleil"
+  trigger:
+    - platform: time_pattern
+      minutes: "/5"
+  condition:
+    - condition: state
+      entity_id: sensor.axpert_mode
+      state: "SBU - Battery mode"
+    - condition: template
+      value_template: >
+        {% set coucher = as_timestamp(state_attr('sun.sun', 'next_setting')) %}
+        {% set seuil = coucher - 3600 %}
+        {{ now().timestamp() >= seuil }}
+  action:
+    - service: shell_command.onduleur_sub
+    - service: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.onduleur_dernier_switch
+      data:
+        datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+    - service: counter.increment
+      target:
+        entity_id: counter.onduleur_switchs_jour
+    - service: notify.notify
+      data:
+        message: >
+          🌙 Onduleur → SUB (1h avant coucher {{ as_timestamp(state_attr('sun.sun', 'next_setting')) | timestamp_custom('%H:%M') }}) | SOC {{ states('sensor.axpert_soc_batterie') }}%
+
+# ------------------------------------------------------------
+# 5. PROTECTION — Trop de switchs dans la journée
+# ------------------------------------------------------------
+- id: onduleur_trop_de_switchs
+  alias: "Onduleur → Trop de switchs journaliers"
+  description: "Suspend les automatisations si trop de switchs"
+  trigger:
+    - platform: state
+      entity_id: counter.onduleur_switchs_jour
+  condition:
+    - condition: template
+      value_template: >
+        {{ states('counter.onduleur_switchs_jour') | int(0) >= 6 }}
+  action:
+    - service: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.onduleur_mode_manuel
+    - service: notify.notify
+      data:
+        message: "⚠️ Onduleur — 6 switchs atteints, passage en mode manuel"
+
+# ------------------------------------------------------------
+# 6. RESET — Compteur switchs à minuit
+# ------------------------------------------------------------
+- id: onduleur_reset_compteur
+  alias: "Onduleur → Reset compteur switchs minuit"
+  trigger:
+    - platform: time
+      at: "00:00:00"
+  action:
+    - service: counter.reset
+      target:
+        entity_id: counter.onduleur_switchs_jour
+
+# ------------------------------------------------------------
+# 7. RETOUR AUTO — Après mode manuel (30 min)
+# ------------------------------------------------------------
+- id: onduleur_retour_auto
+  alias: "Onduleur → Retour mode auto après 30min"
+  description: "Désactive le mode manuel après 30 minutes"
+  trigger:
+    - platform: state
+      entity_id: input_boolean.onduleur_mode_manuel
+      to: "on"
+      for:
+        minutes: 30
+  action:
+    - service: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.onduleur_mode_manuel
+    - service: notify.notify
+      data:
+        message: "🔄 Onduleur — Retour en mode automatique"

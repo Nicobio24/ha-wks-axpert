@@ -1,0 +1,10 @@
+{
+  "domain": "axpert",
+  "name": "Axpert Inverter",
+  "version": "1.0.0",
+  "documentation": "",
+  "requirements": ["pyserial==3.5"],
+  "dependencies": [],
+  "codeowners": [],
+  "iot_class": "local_polling"
+}

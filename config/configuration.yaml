@@ -1,0 +1,69 @@
+
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+# reverse proxy
+http:
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - xxx.xxx.xxx.xxx
+
+sensor:
+  - platform: axpert
+    port: /dev/ttyUSB0
+    baud: 2400
+  - platform: integration
+    source: sensor.axpert_puissance_pv
+    name: "Axpert Energie PV"
+    unit_prefix: k
+    round: 2
+    method: trapezoidal
+  - platform: integration
+    source: sensor.axpert_puissance_charge_batterie
+    name: "Axpert Energie Charge Batterie"
+    unit_prefix: k
+    round: 2
+    method: trapezoidal
+  - platform: integration
+    source: sensor.axpert_puissance_decharge_batterie
+    name: "Axpert Energie Decharge Batterie"
+    unit_prefix: k
+    round: 2
+    method: trapezoidal
+  - platform: integration
+    source: sensor.axpert_puissance_active
+    name: "Axpert Energie Maison"
+    unit_prefix: k
+    round: 2
+    method: trapezoidal
+
+shell_command:
+  onduleur_sbu: "printf '\\x50\\x4F\\x50\\x30\\x32\\xE2\\x0B\\x0D' > /dev/ttyUSB0"
+  onduleur_sub: "printf '\\x50\\x4F\\x50\\x30\\x30\\xA8\\x74\\x0D' > /dev/ttyUSB0"
+
+template:
+  - sensor:
+      - name: "Axpert Puissance Charge Batterie"
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+        state: >
+          {{ (states('sensor.axpert_tension_batterie') | float(0)) *
+             (states('sensor.axpert_courant_charge_batterie') | float(0)) | round(1) }}
+      - name: "Axpert Puissance Decharge Batterie"
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+        state: >
+          {% set out = states('sensor.axpert_puissance_active') | float(0) %}
+          {% set pv = states('sensor.axpert_puissance_pv') | float(0) %}
+          {% set diff = out - pv %}
+          {{ [diff, 0] | max | round(1) }}
