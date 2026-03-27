@@ -1,4 +1,3 @@
-
 # Loads default set of integrations. Do not remove.
 default_config:
 
@@ -6,7 +5,7 @@ default_config:
 frontend:
   themes: !include_dir_merge_named themes
 
-automation: !include automations.yaml
+automation: !include_dir_merge_list automations/
 script: !include scripts.yaml
 scene: !include scenes.yaml
 
@@ -14,30 +13,34 @@ scene: !include scenes.yaml
 http:
   use_x_forwarded_for: true
   trusted_proxies:
-    - xxx.xxx.xxx.xxx
+    - 172.16.250.201
 
+# -------------------------------------------------------
+# Sensors
+# -------------------------------------------------------
 sensor:
-  - platform: axpert
-    port: /dev/ttyUSB0
-    baud: 2400
+
   - platform: integration
     source: sensor.axpert_puissance_pv
     name: "Axpert Energie PV"
     unit_prefix: k
     round: 2
     method: trapezoidal
+
   - platform: integration
     source: sensor.axpert_puissance_charge_batterie
     name: "Axpert Energie Charge Batterie"
     unit_prefix: k
     round: 2
     method: trapezoidal
+
   - platform: integration
     source: sensor.axpert_puissance_decharge_batterie
     name: "Axpert Energie Decharge Batterie"
     unit_prefix: k
     round: 2
     method: trapezoidal
+
   - platform: integration
     source: sensor.axpert_puissance_active
     name: "Axpert Energie Maison"
@@ -45,10 +48,16 @@ sensor:
     round: 2
     method: trapezoidal
 
-shell_command:
-  onduleur_sbu: "printf '\\x50\\x4F\\x50\\x30\\x32\\xE2\\x0B\\x0D' > /dev/ttyUSB0"
-  onduleur_sub: "printf '\\x50\\x4F\\x50\\x30\\x30\\xA8\\x74\\x0D' > /dev/ttyUSB0"
+# -------------------------------------------------------
+# Shell commands — supprimés
+# Les commandes POP sont désormais envoyées via le service
+# axpert.set_mode dans sensor.py (même port série, même lock).
+# shell_command avait un conflit avec le polling série de HA.
+# -------------------------------------------------------
 
+# -------------------------------------------------------
+# Template sensors (inchangés)
+# -------------------------------------------------------
 template:
   - sensor:
       - name: "Axpert Puissance Charge Batterie"
@@ -58,6 +67,7 @@ template:
         state: >
           {{ (states('sensor.axpert_tension_batterie') | float(0)) *
              (states('sensor.axpert_courant_charge_batterie') | float(0)) | round(1) }}
+
       - name: "Axpert Puissance Decharge Batterie"
         unit_of_measurement: "W"
         device_class: power
@@ -67,3 +77,147 @@ template:
           {% set pv = states('sensor.axpert_puissance_pv') | float(0) %}
           {% set diff = out - pv %}
           {{ [diff, 0] | max | round(1) }}
+
+# -------------------------------------------------------
+# AJOUT — Interrupteur mode manuel
+# -------------------------------------------------------
+input_boolean:
+  onduleur_mode_manuel:
+    name: "Onduleur — Mode manuel"
+    icon: mdi:hand-back-right
+
+# -------------------------------------------------------
+# AJOUT — Horodatages pour anti-rebond et hystérésis
+# -------------------------------------------------------
+input_datetime:
+  onduleur_dernier_switch:
+    name: "Onduleur — Dernier switch"
+    has_date: true
+    has_time: true
+
+  # NOUVEAU : chrono début condition SUB (hystérésis 10 min)
+  onduleur_condition_sub_debut:
+    name: "Onduleur — Début condition SUB"
+    has_date: true
+    has_time: true
+    initial: "1970-01-01 00:00:00"
+
+# -------------------------------------------------------
+# AJOUT — Compteur de switchs journaliers
+# -------------------------------------------------------
+counter:
+  onduleur_switchs_jour:
+    name: "Onduleur — Switchs aujourd'hui"
+    initial: 0
+    step: 1
+    icon: mdi:counter
+
+# -------------------------------------------------------
+# AJOUT — Compteur de gels consécutifs (watchdog)
+# -------------------------------------------------------
+input_number:
+  axpert_gel_consecutifs:
+    name: "Axpert — Gels consécutifs"
+    min: 0
+    max: 10
+    initial: 0
+    icon: mdi:alert-circle
+
+  onduleur_seuil_soc_sbu:
+    name: "Onduleur — Seuil SOC passage SBU"
+    min: 50
+    max: 100
+    step: 1
+    initial: 90
+    unit_of_measurement: "%"
+    icon: mdi:battery-arrow-up
+  onduleur_seuil_soc_protection_soir:
+    name: "Onduleur — Seuil SOC protection soir"
+    min: 50
+    max: 100
+    step: 1
+    initial: 85
+    unit_of_measurement: "%"
+    icon: mdi:battery-clock
+  onduleur_heure_protection_soir:
+    name: "Onduleur — Heure protection soir"
+    min: 12
+    max: 20
+    step: 1
+    initial: 16
+    unit_of_measurement: "h"
+    icon: mdi:weather-sunset
+
+
+# -------------------------------------------------------
+# Open-Meteo — Prévisions météo (sans API key, refresh 1h)
+# -------------------------------------------------------
+rest:
+  - resource: "https://api.open-meteo.com/v1/forecast?latitude=46.158&longitude=2.814&hourly=cloud_cover,direct_radiation,precipitation_probability&timezone=Europe%2FParis&forecast_days=2"
+    scan_interval: 3600
+    sensor:
+      - name: "Open-Meteo Forecast"
+        unique_id: open_meteo_forecast
+        value_template: "{{ value_json.hourly.cloud_cover[now().hour] }}"
+        unit_of_measurement: "%"
+        json_attributes_path: "$.hourly"
+        json_attributes:
+          - time
+          - cloud_cover
+          - direct_radiation
+          - precipitation_probability
+
+# -------------------------------------------------------
+# Template sensors — Météo Open-Meteo (dérivés)
+# -------------------------------------------------------
+  - sensor:
+      - name: "Météo Nuages 3h"
+        unique_id: meteo_nuages_3h
+        unit_of_measurement: "%"
+        icon: mdi:cloud-percent
+        state: >
+          {% set h = now().hour %}
+          {% set cc = state_attr('sensor.open_meteo_forecast', 'cloud_cover') %}
+          {% if cc and cc | length > h + 2 %}
+            {{ ((cc[h] | int(0)) + (cc[h+1] | int(0)) + (cc[h+2] | int(0))) // 3 }}
+          {% else %}
+            unknown
+          {% endif %}
+
+      - name: "Météo Irradiance Max Jour"
+        unique_id: meteo_irradiance_max_jour
+        unit_of_measurement: "W/m²"
+        icon: mdi:weather-sunny
+        state: >
+          {% set dr = state_attr('sensor.open_meteo_forecast', 'direct_radiation') %}
+          {% if dr and dr | length >= 24 %}
+            {{ dr[:24] | map('int', 0) | max }}
+          {% else %}
+            0
+          {% endif %}
+
+      - name: "Météo Pluie 3h"
+        unique_id: meteo_pluie_3h
+        unit_of_measurement: "%"
+        icon: mdi:weather-pouring
+        state: >
+          {% set h = now().hour %}
+          {% set pp = state_attr('sensor.open_meteo_forecast', 'precipitation_probability') %}
+          {% if pp and pp | length > h + 2 %}
+            {{ [pp[h] | int(0), pp[h+1] | int(0), pp[h+2] | int(0)] | max }}
+          {% else %}
+            0
+          {% endif %}
+
+      - name: "Météo Irradiance Restante"
+        unique_id: meteo_irradiance_restante
+        unit_of_measurement: "W/m²"
+        icon: mdi:weather-sunset
+        state: >
+          {% set h = now().hour %}
+          {% set dr = state_attr('sensor.open_meteo_forecast', 'direct_radiation') %}
+          {% if dr and dr | length >= 24 %}
+            {{ dr[h:24] | map('int', 0) | max }}
+          {% else %}
+            0
+          {% endif %}

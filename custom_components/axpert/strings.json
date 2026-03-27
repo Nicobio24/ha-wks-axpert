@@ -1,0 +1,16 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Axpert Inverter",
+        "description": "Configurer l'onduleur WKS Axpert",
+        "data": {
+          "port": "Port série"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Cet onduleur est déjà configuré"
+    }
+  }
+}

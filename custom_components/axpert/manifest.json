@@ -1,10 +1,11 @@
 {
   "domain": "axpert",
   "name": "Axpert Inverter",
-  "version": "1.0.0",
-  "documentation": "",
-  "requirements": ["pyserial==3.5"],
+  "version": "2.1.0",
+  "documentation": "https://github.com/Nicobio24/ha-wks-axpert",
+  "requirements": ["wks-com==1.2.1"],
   "dependencies": [],
   "codeowners": [],
-  "iot_class": "local_polling"
+  "iot_class": "local_polling",
+  "config_flow": true
 }

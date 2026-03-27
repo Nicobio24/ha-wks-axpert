@@ -1,10 +1,27 @@
 # ============================================================
 # WATCHDOG ONDULEUR — Détecte et corrige les gels du port série
 # ============================================================
+#
+# CORRECTION par rapport à la version originale :
+#   - Ne redémarre plus HA entier (trop agressif)
+#   - Recharge uniquement le composant axpert via homeassistant.reload_config_entry
+#   - Envoie une notification AVANT de recharger (pas de delay de 30s)
+#   - Garde le redémarrage HA comme dernier recours après 2 gels consécutifs
+#
+# Nécessite dans configuration.yaml :
+#   input_number:
+#     axpert_gel_consecutifs:
+#       min: 0
+#       max: 10
+#       initial: 0
+# ============================================================
 
+# ------------------------------------------------------------
+# 1. Watchdog principal — gel détecté → reload du composant
+# ------------------------------------------------------------
 - id: onduleur_watchdog
   alias: "Onduleur → Watchdog port série"
-  description: "Redémarre HA si pas de mise à jour depuis 5 min"
+  description: "Recharge le composant axpert si pas de mise à jour depuis 5 min"
   trigger:
     - platform: time_pattern
       minutes: "/5"
@@ -17,7 +34,66 @@
   action:
     - service: notify.notify
       data:
-        message: "🔄 Watchdog — Gel détecté, redémarrage HA dans 30s"
+        message: >
+          🔄 Watchdog — Gel port série détecté ({{ [
+            (now() - states.sensor.axpert_puissance_pv.last_updated).total_seconds() // 60,
+            0] | max | int }}min sans données) → Rechargement composant
+    # Incrémenter le compteur de gels consécutifs
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.axpert_gel_consecutifs
+      data:
+        value: "{{ [states('input_number.axpert_gel_consecutifs') | int(0) + 1, 10] | min }}"
+    # Recharger uniquement la config entry axpert (pas tout HA)
+    - service: homeassistant.reload_config_entry
+      target:
+        entity_id: sensor.axpert_puissance_pv
+
+# ------------------------------------------------------------
+# 2. Dernier recours — 2 gels consécutifs → redémarrage HA
+# ------------------------------------------------------------
+- id: onduleur_watchdog_restart_ha
+  alias: "Onduleur → Watchdog redémarrage HA (dernier recours)"
+  description: "Redémarre HA seulement si 2 gels consécutifs non résolus"
+  trigger:
+    - platform: numeric_state
+      entity_id: input_number.axpert_gel_consecutifs
+      above: 1
+  action:
+    - service: notify.notify
+      data:
+        message: "⚠️ Watchdog — 2 gels consécutifs, redémarrage HA dans 60s"
     - delay:
-        seconds: 30
+        seconds: 60
+    # Vérifier une dernière fois que le gel est toujours là
+    - condition: template
+      value_template: >
+        {% set last_update = states.sensor.axpert_puissance_pv.last_updated %}
+        {% set diff = (now() - last_update).total_seconds() %}
+        {{ diff > 300 }}
     - service: homeassistant.restart
+
+# ------------------------------------------------------------
+# 3. Reset compteur gels — données revenues normalement
+# ------------------------------------------------------------
+- id: onduleur_watchdog_reset_gel
+  alias: "Onduleur → Reset compteur gels (données ok)"
+  description: "Remet à zéro le compteur quand les données sont fraîches"
+  trigger:
+    - platform: time_pattern
+      minutes: "/5"
+  condition:
+    - condition: template
+      value_template: >
+        {% set last_update = states.sensor.axpert_puissance_pv.last_updated %}
+        {% set diff = (now() - last_update).total_seconds() %}
+        {{ diff < 120 }}
+    - condition: numeric_state
+      entity_id: input_number.axpert_gel_consecutifs
+      above: 0
+  action:
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.axpert_gel_consecutifs
+      data:
+        value: 0
