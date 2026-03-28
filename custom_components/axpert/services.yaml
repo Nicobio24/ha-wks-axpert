@@ -1,0 +1,14 @@
+set_mode:
+  name: Set Inverter Mode
+  description: Bascule entre SUB et SBU
+  fields:
+    mode:
+      name: Mode
+      description: SUB priorite reseau - SBU priorite batterie
+      required: true
+      example: SBU
+      selector:
+        select:
+          options:
+            - SUB
+            - SBU

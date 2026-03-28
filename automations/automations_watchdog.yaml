@@ -1,10 +1,19 @@
 # ============================================================
 # WATCHDOG ONDULEUR — Détecte et corrige les gels du port série
 # ============================================================
+# Logique notifications :
+#   - 1er gel  → notifie + reload silencieux
+#   - 2ème gel → notifie + reload
+#   - 3ème gel → notifie + redémarrage HA (dernier recours)
+#   - Cycles suivants → reload silencieux sans notification
+# ============================================================
 
+# ------------------------------------------------------------
+# 1. Watchdog principal — gel détecté → reload
+# ------------------------------------------------------------
 - id: onduleur_watchdog
   alias: "Onduleur → Watchdog port série"
-  description: "Redémarre HA si pas de mise à jour depuis 5 min"
+  description: "Recharge le composant axpert si pas de mise à jour depuis 5 min"
   trigger:
     - platform: time_pattern
       minutes: "/5"
@@ -12,12 +21,76 @@
     - condition: template
       value_template: >
         {% set last_update = states.sensor.axpert_puissance_pv.last_updated %}
-        {% set diff = (now() - last_update).total_seconds() %}
-        {{ diff > 300 }}
+        {{ (now() - last_update).total_seconds() > 300 }}
+  action:
+    # Incrémenter le compteur
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.axpert_gel_consecutifs
+      data:
+        value: "{{ [states('input_number.axpert_gel_consecutifs') | int(0) + 1, 10] | min }}"
+    # Notifier uniquement sur le 1er et 2ème gel (pas le spam suivant)
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: >
+                {{ states('input_number.axpert_gel_consecutifs') | int(0) <= 2 }}
+          sequence:
+            - service: notify.notify
+              data:
+                message: >
+                  🔄 Watchdog — Gel #{{ states('input_number.axpert_gel_consecutifs') | int }}
+                  ({{ [(now() - states.sensor.axpert_puissance_pv.last_updated).total_seconds() // 60, 0] | max | int }}min sans données)
+                  → Rechargement composant axpert
+    # Recharger la config entry axpert
+    - service: homeassistant.reload_config_entry
+      target:
+        entity_id: sensor.axpert_puissance_pv
+
+# ------------------------------------------------------------
+# 2. Dernier recours — 3 gels consécutifs → redémarrage HA
+# ------------------------------------------------------------
+- id: onduleur_watchdog_restart_ha
+  alias: "Onduleur → Watchdog redémarrage HA (dernier recours)"
+  description: "Redémarre HA seulement si 3 gels consécutifs non résolus"
+  trigger:
+    - platform: numeric_state
+      entity_id: input_number.axpert_gel_consecutifs
+      above: 2
   action:
     - service: notify.notify
       data:
-        message: "🔄 Watchdog — Gel détecté, redémarrage HA dans 30s"
+        message: "⚠️ Watchdog — 3 gels consécutifs, redémarrage HA dans 60s"
     - delay:
-        seconds: 30
+        seconds: 60
+    - condition: template
+      value_template: >
+        {{ (now() - states.sensor.axpert_puissance_pv.last_updated).total_seconds() > 300 }}
     - service: homeassistant.restart
+
+# ------------------------------------------------------------
+# 3. Reset compteur — données revenues → 1 seule notification
+# ------------------------------------------------------------
+- id: onduleur_watchdog_reset_gel
+  alias: "Onduleur → Reset compteur gels (données ok)"
+  description: "Remet à zéro le compteur quand les données sont fraîches"
+  trigger:
+    - platform: time_pattern
+      minutes: "/5"
+  condition:
+    - condition: template
+      value_template: >
+        {{ (now() - states.sensor.axpert_puissance_pv.last_updated).total_seconds() < 120 }}
+    - condition: numeric_state
+      entity_id: input_number.axpert_gel_consecutifs
+      above: 0
+  action:
+    - service: notify.notify
+      data:
+        message: >
+          ✅ Watchdog — Port série rétabli après {{ states('input_number.axpert_gel_consecutifs') | int }} gel(s)
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.axpert_gel_consecutifs
+      data:
+        value: 0
