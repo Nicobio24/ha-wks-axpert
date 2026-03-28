@@ -16,9 +16,16 @@ http:
     - 172.16.250.201
 
 # -------------------------------------------------------
+<<<<<<< HEAD
 # Sensors — intégrations
 # -------------------------------------------------------
 sensor:
+=======
+# Sensors
+# -------------------------------------------------------
+sensor:
+
+>>>>>>> 45346eb1786dc36342f4843eba4b2c87d668ce74
   - platform: integration
     source: sensor.axpert_puissance_pv
     name: "Axpert Energie PV"
@@ -48,7 +55,18 @@ sensor:
     method: trapezoidal
 
 # -------------------------------------------------------
+<<<<<<< HEAD
 # Template sensors
+=======
+# Shell commands — supprimés
+# Les commandes POP sont désormais envoyées via le service
+# axpert.set_mode dans sensor.py (même port série, même lock).
+# shell_command avait un conflit avec le polling série de HA.
+# -------------------------------------------------------
+
+# -------------------------------------------------------
+# Template sensors (inchangés)
+>>>>>>> 45346eb1786dc36342f4843eba4b2c87d668ce74
 # -------------------------------------------------------
 template:
   - sensor:
@@ -67,6 +85,7 @@ template:
         state: >
           {% set out = states('sensor.axpert_puissance_active') | float(0) %}
           {% set pv = states('sensor.axpert_puissance_pv') | float(0) %}
+<<<<<<< HEAD
           {{ [out - pv, 0] | max | round(1) }}
 
       # --- Météo Open-Meteo (dérivés du sensor open_meteo_forecast) ---
@@ -123,23 +142,47 @@ template:
 
 # -------------------------------------------------------
 # Helpers
+=======
+          {% set diff = out - pv %}
+          {{ [diff, 0] | max | round(1) }}
+
+# -------------------------------------------------------
+# AJOUT — Interrupteur mode manuel
+>>>>>>> 45346eb1786dc36342f4843eba4b2c87d668ce74
 # -------------------------------------------------------
 input_boolean:
   onduleur_mode_manuel:
     name: "Onduleur — Mode manuel"
     icon: mdi:hand-back-right
 
+<<<<<<< HEAD
+=======
+# -------------------------------------------------------
+# AJOUT — Horodatages pour anti-rebond et hystérésis
+# -------------------------------------------------------
+>>>>>>> 45346eb1786dc36342f4843eba4b2c87d668ce74
 input_datetime:
   onduleur_dernier_switch:
     name: "Onduleur — Dernier switch"
     has_date: true
     has_time: true
+<<<<<<< HEAD
+=======
+
+  # NOUVEAU : chrono début condition SUB (hystérésis 10 min)
+>>>>>>> 45346eb1786dc36342f4843eba4b2c87d668ce74
   onduleur_condition_sub_debut:
     name: "Onduleur — Début condition SUB"
     has_date: true
     has_time: true
     initial: "1970-01-01 00:00:00"
 
+<<<<<<< HEAD
+=======
+# -------------------------------------------------------
+# AJOUT — Compteur de switchs journaliers
+# -------------------------------------------------------
+>>>>>>> 45346eb1786dc36342f4843eba4b2c87d668ce74
 counter:
   onduleur_switchs_jour:
     name: "Onduleur — Switchs aujourd'hui"
@@ -147,6 +190,12 @@ counter:
     step: 1
     icon: mdi:counter
 
+<<<<<<< HEAD
+=======
+# -------------------------------------------------------
+# AJOUT — Compteur de gels consécutifs (watchdog)
+# -------------------------------------------------------
+>>>>>>> 45346eb1786dc36342f4843eba4b2c87d668ce74
 input_number:
   axpert_gel_consecutifs:
     name: "Axpert — Gels consécutifs"
@@ -154,6 +203,10 @@ input_number:
     max: 10
     initial: 0
     icon: mdi:alert-circle
+<<<<<<< HEAD
+=======
+
+>>>>>>> 45346eb1786dc36342f4843eba4b2c87d668ce74
   onduleur_seuil_soc_sbu:
     name: "Onduleur — Seuil SOC passage SBU"
     min: 50
@@ -179,6 +232,10 @@ input_number:
     unit_of_measurement: "h"
     icon: mdi:weather-sunset
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> 45346eb1786dc36342f4843eba4b2c87d668ce74
 # -------------------------------------------------------
 # Open-Meteo — Prévisions météo (sans API key, refresh 1h)
 # -------------------------------------------------------
@@ -196,3 +253,61 @@ rest:
           - cloud_cover
           - direct_radiation
           - precipitation_probability
+<<<<<<< HEAD
+=======
+
+# -------------------------------------------------------
+# Template sensors — Météo Open-Meteo (dérivés)
+# -------------------------------------------------------
+  - sensor:
+      - name: "Météo Nuages 3h"
+        unique_id: meteo_nuages_3h
+        unit_of_measurement: "%"
+        icon: mdi:cloud-percent
+        state: >
+          {% set h = now().hour %}
+          {% set cc = state_attr('sensor.open_meteo_forecast', 'cloud_cover') %}
+          {% if cc and cc | length > h + 2 %}
+            {{ ((cc[h] | int(0)) + (cc[h+1] | int(0)) + (cc[h+2] | int(0))) // 3 }}
+          {% else %}
+            unknown
+          {% endif %}
+
+      - name: "Météo Irradiance Max Jour"
+        unique_id: meteo_irradiance_max_jour
+        unit_of_measurement: "W/m²"
+        icon: mdi:weather-sunny
+        state: >
+          {% set dr = state_attr('sensor.open_meteo_forecast', 'direct_radiation') %}
+          {% if dr and dr | length >= 24 %}
+            {{ dr[:24] | map('int', 0) | max }}
+          {% else %}
+            0
+          {% endif %}
+
+      - name: "Météo Pluie 3h"
+        unique_id: meteo_pluie_3h
+        unit_of_measurement: "%"
+        icon: mdi:weather-pouring
+        state: >
+          {% set h = now().hour %}
+          {% set pp = state_attr('sensor.open_meteo_forecast', 'precipitation_probability') %}
+          {% if pp and pp | length > h + 2 %}
+            {{ [pp[h] | int(0), pp[h+1] | int(0), pp[h+2] | int(0)] | max }}
+          {% else %}
+            0
+          {% endif %}
+
+      - name: "Météo Irradiance Restante"
+        unique_id: meteo_irradiance_restante
+        unit_of_measurement: "W/m²"
+        icon: mdi:weather-sunset
+        state: >
+          {% set h = now().hour %}
+          {% set dr = state_attr('sensor.open_meteo_forecast', 'direct_radiation') %}
+          {% if dr and dr | length >= 24 %}
+            {{ dr[h:24] | map('int', 0) | max }}
+          {% else %}
+            0
+          {% endif %}
+>>>>>>> 45346eb1786dc36342f4843eba4b2c87d668ce74
